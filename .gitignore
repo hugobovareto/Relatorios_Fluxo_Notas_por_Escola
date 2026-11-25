@@ -1,15 +1,34 @@
-# Ambiente virtual
+# Ignorar toda a pasta dados
+dados/
+relatorios_gerados/
+relatorios_pdf/
+
+# Ignorar ambiente virtual
 venv/
-env/
+
+# Ignorar arquivos temporários do VS Code
+.vscode/
+
+# Ignorar arquivos do Python
+*.pyc
 __pycache__/
+
+
+# Ignorar aquivos .pdf
+*.pdf
+
+Ignorar imagens geradas
+*.png
+*.jpg
+
+# Ignorar apresentacoes geradas
+apresentacoes_geradas/
+
+# Ignorar pasta de gráficos
+graficos_gerados/
 
 # Dados
 *.csv
 *.xlsx
 *.xls
 *.xlsb
-
-
-# Arquivos do sistema
-.DS_Store
-Thumbs.db
