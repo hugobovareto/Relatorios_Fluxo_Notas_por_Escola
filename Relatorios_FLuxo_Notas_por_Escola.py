@@ -23,6 +23,7 @@ O identificador único usado é o CPF:
 Considerar somente os componentes da BNCC para o df_notas:
 bncc = ['Arte',
         'Biologia',
+        'Ciências',
         'Educação Física',
         'Filosofia',
         'Física',
@@ -32,19 +33,16 @@ bncc = ['Arte',
         'Língua Portuguesa',
         'Matemática',
         'Química',
-        'Sociologia', 
-        'Ciências']
+        'Sociologia']
 
 O Relatório de Notas está segmentado por componentes, então nesse, cria a variável:
 - nota média.
 
 Para notas, considerar somente as notas do 1º, 2º e 3º bimestres.
-Caso o estudante não tenha nota em algum bimestre, considerar como NaN, logo não impacta na média.
-    Se as duas colunas têm valores → média das duas.
-    Se apenas uma tem valor → retorna esse valor.
-    Se ambas são NaN → retorna NaN.
+Caso o estudante não tenha nota em algum bimestre, essa nota é trasnformada em 0, logo impacta na média.
+    A média é sempre feita considerando as notas dos 3 bimestres, mesmo que a nota seja 0.
 
-Para valores duplicatos 
+Para valores duplicatos de CPF + COMPONENTE + SÉRIE, foi mantida a nota mais baixa. 
     
 
 Gerar apresentações por escola.
@@ -70,6 +68,10 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import openpyxl
 import re
+import copy
+from pathlib import Path
+from pptx import Presentation
+from pptx.oxml import parse_xml
 
 
 # Base inicial geral de Notas
@@ -172,13 +174,18 @@ mapeamento_etapa = {
 
 df_EF_EM_bncc['ETAPA_RESUMIDA'] = df_EF_EM_bncc['SÉRIE'].map(mapeamento_etapa)
 
-# Criar coluna com nota final média, considerando as notas do 1º, 2º e 3º bimestres:
-# (ignora os valores NaN e fazem a média somente com os valores presentes. Se só tiver 1 nota disponível, a média será essa nota)
-'''
-Se as duas colunas têm valores → média das duas.
-Se apenas uma tem valor → retorna esse valor.
-Se ambas são NaN → retorna NaN.
-'''
+# Criar coluna com nota final média, considerando as notas do 1º, 2º e 3º bimestres
+# Notas NaN transformadas em 0 para as notas do 1º, 2º e 3º bimestres
+cols_bimestres = ['NOTA 1º BIMESTRE', 'NOTA 2º BIMESTRE', 'NOTA 3º BIMESTRE']
+
+df_EF_EM_bncc[cols_bimestres] = (
+    df_EF_EM_bncc[cols_bimestres]
+    .apply(pd.to_numeric, errors='coerce')
+    .fillna(0)
+)
+
+
+
                                     ###### MODIFICAR AQUI QUANDO TIVER MAIS NOTAS LANÇADAS ######
 df_EF_EM_bncc['MEDIA_NOTAS'] = df_EF_EM_bncc[['NOTA 1º BIMESTRE', 'NOTA 2º BIMESTRE', 'NOTA 3º BIMESTRE']].mean(axis=1, skipna=True)
 
@@ -196,18 +203,48 @@ df_EF_EM_bncc['STATUS'] = np.where(
 
 
 # Garantir que cada estudante seja contado apenas uma vez por componente e por série
-# Excluir duplicatas e manter somente o CPF + SÉRIE + COMPONENTE CURRICULAR com menor MEDIA_NOTAS
+# Excluir duplicatas e manter somente o CPF + SÉRIE + COMPONENTE CURRICULAR com valor menor para MEDIA_NOTAS
 chaves = ['CPF PESSOA', 'COMPONENTE CURRICULAR', 'SÉRIE']
 
 # Garante que MEDIA_NOTAS seja numérica (evita ordenação alfabética onde "10" vem antes de "2")
 df_EF_EM_bncc['MEDIA_NOTAS'] = pd.to_numeric(df_EF_EM_bncc['MEDIA_NOTAS'], errors='coerce')
 
-df_sem_duplicatas = (
+# Coloca os valores ausentes (NaN) no topo e ordena os demais do menor para o maior
+df_ordenado = (
     df_EF_EM_bncc
-    .sort_values(by='MEDIA_NOTAS', ascending=True, na_position='last')
-    .drop_duplicates(subset=chaves, keep='first')
-    .sort_index()  # opcional: restaura a ordem original das linhas
+    .sort_values(by='MEDIA_NOTAS', ascending=True, na_position='first')
 )
+
+# Mantém a 1ª ocorrência de cada grupo (NaN se existir; caso contrário, a menor nota)
+df_sem_duplicatas = (
+    df_ordenado
+    .drop_duplicates(subset=chaves, keep='first')
+    .sort_index()
+)
+
+# Excel com os valores que aparecem duplicados na base
+# Filtra todas as linhas que pertencem a alguma combinação duplicada
+df_duplicados = df_ordenado[df_ordenado.duplicated(subset=chaves, keep=False)].copy()
+
+# Identifica qual linha foi mantida ('Mantida') e quais foram descartadas ('Excluída')
+df_duplicados['ACAO_DUPLICATA'] = np.where(
+    df_duplicados.duplicated(subset=chaves, keep='first'),
+    'Excluída',
+    'Mantida'
+)
+
+# Ordena por estudante, componente, série e coloca 'Mantida' antes de 'Excluída'
+df_duplicados = df_duplicados.sort_values(
+    by=chaves + ['ACAO_DUPLICATA'],
+    ascending=[True, True, True, False]
+)
+
+caminho_duplicatas = r"D:\Scripts_Python\FGV\Relatorios_Fluxo_Notas_por_Escola\registros_duplicados.xlsx"
+
+with pd.ExcelWriter(caminho_duplicatas, engine="xlsxwriter") as writer:
+    df_duplicados.to_excel(writer, sheet_name="Duplicados", index=False)
+
+print(f"Total de linhas duplicadas exportadas: {len(df_duplicados)}")
 
 
 # Salvar em Excel o dataframe
@@ -223,6 +260,348 @@ with pd.ExcelWriter(caminho_xlsx, engine="xlsxwriter") as writer:
 
         grupo.to_excel(writer, sheet_name=nome_aba, index=False)
         print(f"Aba '{nome_aba}' gravada: {len(grupo)} linhas")
+
+
+
+# Gerar base de dados somente dos reprovados
+df_reprovados = df_sem_duplicatas[df_sem_duplicatas['STATUS'].str.strip() == 'Reprovado'].copy()
+
+
+
+
+
+
+
+
+
+###########################################################
+# Criação das planilhas para cada escola com 2 abas: Reprovados e Todos os Estudantes
+
+pasta_raiz = Path(r"D:\Scripts_Python\FGV\Relatorios_Fluxo_Notas_por_Escola\relatorios_gerados")
+pasta_raiz.mkdir(parents=True, exist_ok=True)
+
+# Remove sufixo '.0' caso INEP ESCOLA tenha sido lido como float e trata nulos
+def limpar_inep(serie):
+    return (
+        serie.astype(str)
+        .str.strip()
+        .str.replace(r"\.0$", "", regex=True)
+        .replace({"nan": "Sem_INEP", "None": "Sem_INEP", "": "Sem_INEP"})
+    )
+
+df_todos = df_sem_duplicatas.copy()
+df_rep = df_reprovados.copy()
+
+df_todos["INEP_STR"] = limpar_inep(df_todos["INEP ESCOLA"])
+df_rep["INEP_STR"] = limpar_inep(df_rep["INEP ESCOLA"])
+
+# Pré-agrupa por (DIREC, INEP) em dicionários para evitar filtros repetitivos dentro do loop
+grupos_todos = {
+    chave: grupo.drop(columns=["INEP_STR"])
+    for chave, grupo in df_todos.groupby(["DIREC", "INEP_STR"], dropna=False)
+}
+grupos_reprovados = {
+    chave: grupo.drop(columns=["INEP_STR"])
+    for chave, grupo in df_rep.groupby(["DIREC", "INEP_STR"], dropna=False)
+}
+
+# DataFrame vazio com as colunas originais para escolas sem nenhum reprovado
+df_reprovados_vazio = df_reprovados.iloc[0:0].copy()
+
+total_arquivos = 0
+
+for (direc, inep_str), df_escola_todos in grupos_todos.items():
+    # Define o nome da pasta da DIREC mantendo o texto original (higienizando apenas caracteres proibidos no Windows)
+    if pd.isna(direc) or str(direc).strip() == "":
+        nome_pasta_direc = "Sem_DIREC"
+    else:
+        nome_pasta_direc = re.sub(r'[\\/*?:"<>|]', "_", str(direc).strip())
+
+    pasta_direc = pasta_raiz / nome_pasta_direc
+    pasta_direc.mkdir(parents=True, exist_ok=True)
+
+    # Recupera os reprovados da escola (ou aba vazia com cabeçalho se houver 0 reprovados)
+    df_escola_rep = grupos_reprovados.get((direc, inep_str), df_reprovados_vazio)
+
+    caminho_arquivo = pasta_direc / f"{inep_str}_notas_estudantes.xlsx"
+
+    with pd.ExcelWriter(caminho_arquivo, engine="xlsxwriter") as writer:
+        df_escola_rep.to_excel(writer, sheet_name="Reprovados", index=False)
+        df_escola_todos.to_excel(writer, sheet_name="Todos alunos", index=False)
+
+    total_arquivos += 1
+
+print(f"Concluído: {total_arquivos} planilhas geradas em '{pasta_raiz}'.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+###########################################################
+# Apresentações para cada escola
+
+
+# ==============================================================================
+# 1. CONFIGURAÇÕES E MAPEAMENTOS
+# ==============================================================================
+caminho_template = Path(r"D:\Scripts_Python\FGV\Relatorios_Fluxo_Notas_por_Escola\template_notas_escolas.pptx")
+pasta_raiz = Path(r"D:\Scripts_Python\FGV\Relatorios_Fluxo_Notas_por_Escola\relatorios_gerados")
+data_dados = "25/11/2026"
+
+# Mapeamento: valor na coluna 'COMPONENTE CURRICULAR' -> nome da tabela no template
+mapa_componentes = {
+    "Arte": "tabela_arte",
+    "Biologia": "tabela_biologia",
+    "Ciências": "tabela_ciencias",
+    "Educação Física": "tabela_ed_fisica",
+    "Filosofia": "tabela_filosofia",
+    "Física": "tabela_fisica",
+    "Geografia": "tabela_geografia",
+    "História": "tabela_historia",
+    "Língua Inglesa": "tabela_ingles",
+    "Língua Portuguesa": "tabela_portugues",
+    "Matemática": "tabela_matematica",
+    "Química": "tabela_quimica",
+    "Sociologia": "tabela_sociologia",
+}
+
+# Ordem hierárquica das séries
+ordem_series = [
+    "6º ANO",
+    "7º ANO",
+    "8º ANO",
+    "9º ANO",
+    "1ª SÉRIE",
+    "2ª SÉRIE",
+    "3ª SÉRIE",
+]
+
+# ==============================================================================
+# 2. FUNÇÕES AUXILIARES DE MANIPULAÇÃO DO POWERPOINT
+# ==============================================================================
+def substituir_texto_placeholders(prs, substituicoes):
+    """Substitui placeholders de texto preservando a formatação original da fonte."""
+    for slide in prs.slides:
+        for shp in slide.shapes:
+            if not shp.has_text_frame:
+                continue
+            for p in shp.text_frame.paragraphs:
+                texto_original = p.text
+                texto_novo = texto_original
+                for chave, valor in substituicoes.items():
+                    if chave in texto_novo:
+                        texto_novo = texto_novo.replace(chave, str(valor))
+                if texto_novo != texto_original:
+                    if p.runs:
+                        p.runs[0].text = texto_novo
+                        for run in p.runs[1:]:
+                            run.text = ""
+                    else:
+                        p.text = texto_novo
+
+
+def escrever_celula(cell, texto):
+    """Escreve o valor na célula mantendo fonte, tamanho, cor e alinhamento do template."""
+    tf = cell.text_frame
+    if tf.paragraphs:
+        p = tf.paragraphs[0]
+        if p.runs:
+            p.runs[0].text = texto
+            for run in p.runs[1:]:
+                run.text = ""
+        else:
+            p.text = texto
+        for p_extra in tf.paragraphs[1:]:
+            p_extra.text = ""
+    else:
+        cell.text = texto
+
+
+def encontrar_tabela_no_slide(slide, nome_tabela):
+    """Localiza o objeto de tabela pelo nome definido no Painel de Seleção."""
+    for shp in slide.shapes:
+        if shp.has_table and shp.name == nome_tabela:
+            return shp.table
+    return None
+
+
+def preencher_tabela(table, df_bloco):
+    """Preenche até 11 linhas de estudantes na tabela e limpa as linhas restantes."""
+    max_linhas = len(table.rows) - 1  # Desconta a linha 0 (cabeçalho)
+
+    for idx_linha in range(max_linhas):
+        row = table.rows[idx_linha + 1]
+
+        if idx_linha < len(df_bloco):
+            registro = df_bloco.iloc[idx_linha]
+
+            # Coluna 0: NOME PESSOA (máximo de 20 caracteres)
+            nome = "" if pd.isna(registro["NOME PESSOA"]) else str(registro["NOME PESSOA"]).strip()[:20]
+
+            # Coluna 1: MATRÍCULA ESTUDANTE (remove eventual '.0')
+            if pd.isna(registro["MATRÍCULA ESTUDANTE"]):
+                matricula = ""
+            else:
+                matricula = re.sub(r"\.0$", "", str(registro["MATRÍCULA ESTUDANTE"]).strip())
+
+            # Coluna 2: SÉRIE
+            serie = "" if pd.isna(registro["SÉRIE"]) else str(registro["SÉRIE"]).strip()
+
+            # Coluna 3: MEDIA_NOTAS (arredondamento com 2 casas decimais)
+            if pd.isna(registro["MEDIA_NOTAS"]):
+                media = ""
+            else:
+                valor_num = round(float(registro["MEDIA_NOTAS"]), 2)
+                media = f"{valor_num:.2f}".replace(".", ",")  # Remova .replace(".", ",") se preferir ponto
+
+            valores = [nome, matricula, serie, media]
+        else:
+            valores = ["", "", "", ""]
+
+        for idx_col, val in enumerate(valores):
+            escrever_celula(row.cells[idx_col], val)
+
+
+def duplicar_slide(prs, slide_origem):
+    """Cria uma cópia exata do slide_origem e a insere imediatamente após ele."""
+    slide_novo = prs.slides.add_slide(slide_origem.slide_layout)
+
+    # Remove eventuais placeholders automáticos do layout
+    for shp in list(slide_novo.shapes):
+        sp = shp._element
+        sp.getparent().remove(sp)
+
+    # Copia relacionamentos (como imagens, caso existam)
+    mapa_rids = {}
+    for rId, rel in slide_origem.part.rels.items():
+        if "notesSlide" not in rel.reltype and "slideLayout" not in rel.reltype:
+            novo_rId = slide_novo.part.rels.get_or_add(rel.reltype, rel._target)
+            mapa_rids[rId] = novo_rId
+
+    # Clona todas as formas e tabelas do slide original
+    for shp in slide_origem.shapes:
+        el_copia = copy.deepcopy(shp._element)
+        if mapa_rids:
+            xml_str = el_copia.xml
+            for antigo_id, novo_id in mapa_rids.items():
+                if antigo_id != novo_id:
+                    xml_str = xml_str.replace(f'"{antigo_id}"', f'"{novo_id}"')
+            el_copia = parse_xml(xml_str)
+        slide_novo.shapes._spTree.insert_element_before(el_copia, "p:extLst")
+
+    # Reposiciona o slide clonado logo após o slide_origem
+    sldIdLst = prs.slides._sldIdLst
+    lista_ids = list(sldIdLst)
+    idx_origem = prs.slides.index(slide_origem)
+    novo_sldId = lista_ids[-1]
+    sldIdLst.remove(novo_sldId)
+    sldIdLst.insert(idx_origem + 1, novo_sldId)
+
+    return slide_novo
+
+
+# ==============================================================================
+# 3. GERAÇÃO DAS APRESENTAÇÕES POR ESCOLA
+# ==============================================================================
+total_apresentacoes = 0
+
+for (direc, inep_str), df_escola_todos in grupos_todos.items():
+    # Caminho da pasta da DIREC já criada no passo anterior
+    if pd.isna(direc) or str(direc).strip() == "":
+        nome_pasta_direc = "Sem_DIREC"
+    else:
+        nome_pasta_direc = re.sub(r'[\\/*?:"<>|]', "_", str(direc).strip())
+
+    pasta_direc = pasta_raiz / nome_pasta_direc
+    pasta_direc.mkdir(parents=True, exist_ok=True)
+
+    # Nome da escola para a capa
+    series_escola = df_escola_todos["ESCOLA"].dropna()
+    nome_escola = str(series_escola.iloc[0]).strip() if not series_escola.empty else f"Escola INEP {inep_str}"
+
+    # Abre uma nova instância limpa do template
+    prs = Presentation(str(caminho_template))
+
+    # Substitui nome_escola e data_dados (cobre com e sem chaves)
+    substituir_texto_placeholders(
+        prs,
+        {
+            "{{nome_escola}}": nome_escola,
+            "nome_escola": nome_escola,
+            "{{data_dados}}": data_dados,
+            "data_dados": data_dados,
+        },
+    )
+
+    # Mapeia os slides originais de cada tabela antes de qualquer duplicação
+    slides_base_tabelas = {}
+    for slide in prs.slides:
+        for shp in slide.shapes:
+            if shp.has_table and shp.name in mapa_componentes.values():
+                slides_base_tabelas[shp.name] = slide
+
+    # Filtra e prepara os reprovados da escola atual
+    df_escola_rep = grupos_reprovados.get((direc, inep_str), df_reprovados_vazio).copy()
+    if not df_escola_rep.empty:
+        df_escola_rep["SERIE_ORD"] = pd.Categorical(
+            df_escola_rep["SÉRIE"].astype(str).str.strip(),
+            categories=ordem_series,
+            ordered=True,
+        )
+        df_escola_rep["MEDIA_NOTAS"] = pd.to_numeric(df_escola_rep["MEDIA_NOTAS"], errors="coerce")
+
+    # Preenche cada componente curricular (duplicando slides se passar de 11 alunos)
+    for componente, nome_tabela in mapa_componentes.items():
+        slide_origem = slides_base_tabelas.get(nome_tabela)
+        if slide_origem is None:
+            print(f"Aviso: tabela '{nome_tabela}' não encontrada no template.")
+            continue
+
+        tabela_origem = encontrar_tabela_no_slide(slide_origem, nome_tabela)
+        max_linhas = len(tabela_origem.rows) - 1  # 11 linhas de dados
+
+        if df_escola_rep.empty:
+            df_comp = df_escola_rep
+        else:
+            df_comp = (
+                df_escola_rep[df_escola_rep["COMPONENTE CURRICULAR"].astype(str).str.strip() == componente]
+                .sort_values(by=["SERIE_ORD", "MEDIA_NOTAS"], ascending=[True, True], na_position="last")
+            )
+
+        # Divide em blocos de 11 estudantes (mantém 1 bloco vazio se houver 0 reprovados)
+        if len(df_comp) == 0:
+            blocos = [df_comp]
+        else:
+            blocos = [df_comp.iloc[i : i + max_linhas] for i in range(0, len(df_comp), max_linhas)]
+
+        slide_atual = slide_origem
+        for idx_bloco, df_bloco in enumerate(blocos):
+            if idx_bloco > 0:
+                slide_atual = duplicar_slide(prs, slide_atual)
+            tabela_atual = encontrar_tabela_no_slide(slide_atual, nome_tabela)
+            preencher_tabela(tabela_atual, df_bloco)
+
+    caminho_saida_pptx = pasta_direc / f"{inep_str}_notas_escolas.pptx"
+    prs.save(str(caminho_saida_pptx))
+    total_apresentacoes += 1
+
+print(f"Concluído: {total_apresentacoes} apresentações geradas em '{pasta_raiz}'.")
+
+
+
 
 
 
