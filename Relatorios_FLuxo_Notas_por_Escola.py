@@ -72,6 +72,7 @@ import copy
 from pathlib import Path
 from pptx import Presentation
 from pptx.oxml import parse_xml
+from pptx.util import Pt
 
 
 # Base inicial geral de Notas
@@ -274,6 +275,37 @@ df_reprovados = df_sem_duplicatas[df_sem_duplicatas['STATUS'].str.strip() == 'Re
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ###########################################################
 # Criação das planilhas para cada escola com 2 abas: Reprovados e Todos os Estudantes
 
@@ -350,9 +382,27 @@ print(f"Concluído: {total_arquivos} planilhas geradas em '{pasta_raiz}'.")
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ###########################################################
 # Apresentações para cada escola
-
 
 # ==============================================================================
 # 1. CONFIGURAÇÕES E MAPEAMENTOS
@@ -361,7 +411,6 @@ caminho_template = Path(r"D:\Scripts_Python\FGV\Relatorios_Fluxo_Notas_por_Escol
 pasta_raiz = Path(r"D:\Scripts_Python\FGV\Relatorios_Fluxo_Notas_por_Escola\relatorios_gerados")
 data_dados = "25/11/2026"
 
-# Mapeamento: valor na coluna 'COMPONENTE CURRICULAR' -> nome da tabela no template
 mapa_componentes = {
     "Arte": "tabela_arte",
     "Biologia": "tabela_biologia",
@@ -378,7 +427,6 @@ mapa_componentes = {
     "Sociologia": "tabela_sociologia",
 }
 
-# Ordem hierárquica das séries
 ordem_series = [
     "6º ANO",
     "7º ANO",
@@ -393,7 +441,7 @@ ordem_series = [
 # 2. FUNÇÕES AUXILIARES DE MANIPULAÇÃO DO POWERPOINT
 # ==============================================================================
 def substituir_texto_placeholders(prs, substituicoes):
-    """Substitui placeholders de texto preservando a formatação original da fonte."""
+    """Substitui placeholders de texto preservando a formatação original."""
     for slide in prs.slides:
         for shp in slide.shapes:
             if not shp.has_text_frame:
@@ -414,20 +462,27 @@ def substituir_texto_placeholders(prs, substituicoes):
 
 
 def escrever_celula(cell, texto):
-    """Escreve o valor na célula mantendo fonte, tamanho, cor e alinhamento do template."""
+    """Escreve o valor na célula forçando a fonte Nunito tamanho 20."""
     tf = cell.text_frame
-    if tf.paragraphs:
-        p = tf.paragraphs[0]
-        if p.runs:
-            p.runs[0].text = texto
-            for run in p.runs[1:]:
-                run.text = ""
-        else:
-            p.text = texto
-        for p_extra in tf.paragraphs[1:]:
-            p_extra.text = ""
+    p = tf.paragraphs[0]
+    p.font.name = "Nunito"
+    p.font.size = Pt(20)
+
+    if p.runs:
+        run = p.runs[0]
+        run.text = texto
+        for r_extra in p.runs[1:]:
+            r_extra.text = ""
     else:
-        cell.text = texto
+        run = p.add_run()
+        run.text = texto
+
+    run.font.name = "Nunito"
+    run.font.size = Pt(20)
+
+    # Remove parágrafos extras caso existam na célula
+    for p_extra in list(tf.paragraphs)[1:]:
+        p_extra._element.getparent().remove(p_extra._element)
 
 
 def encontrar_tabela_no_slide(slide, nome_tabela):
@@ -439,19 +494,19 @@ def encontrar_tabela_no_slide(slide, nome_tabela):
 
 
 def preencher_tabela(table, df_bloco):
-    """Preenche até 11 linhas de estudantes na tabela e limpa as linhas restantes."""
-    max_linhas = len(table.rows) - 1  # Desconta a linha 0 (cabeçalho)
+    """Preenche a partir da 1ª linha (índice 0) até o limite de 15 linhas e limpa as restantes."""
+    max_linhas = min(15, len(table.rows))
 
     for idx_linha in range(max_linhas):
-        row = table.rows[idx_linha + 1]
+        row = table.rows[idx_linha]
 
         if idx_linha < len(df_bloco):
             registro = df_bloco.iloc[idx_linha]
 
-            # Coluna 0: NOME PESSOA (máximo de 20 caracteres)
-            nome = "" if pd.isna(registro["NOME PESSOA"]) else str(registro["NOME PESSOA"]).strip()[:20]
+            # Coluna 0: NOME PESSOA (máximo de 30 caracteres)
+            nome = "" if pd.isna(registro["NOME PESSOA"]) else str(registro["NOME PESSOA"]).strip()[:30]
 
-            # Coluna 1: MATRÍCULA ESTUDANTE (remove eventual '.0')
+            # Coluna 1: MATRÍCULA ESTUDANTE
             if pd.isna(registro["MATRÍCULA ESTUDANTE"]):
                 matricula = ""
             else:
@@ -460,12 +515,12 @@ def preencher_tabela(table, df_bloco):
             # Coluna 2: SÉRIE
             serie = "" if pd.isna(registro["SÉRIE"]) else str(registro["SÉRIE"]).strip()
 
-            # Coluna 3: MEDIA_NOTAS (arredondamento com 2 casas decimais)
+            # Coluna 3: MEDIA_NOTAS (2 casas decimais)
             if pd.isna(registro["MEDIA_NOTAS"]):
                 media = ""
             else:
                 valor_num = round(float(registro["MEDIA_NOTAS"]), 2)
-                media = f"{valor_num:.2f}".replace(".", ",")  # Remova .replace(".", ",") se preferir ponto
+                media = f"{valor_num:.2f}".replace(".", ",")
 
             valores = [nome, matricula, serie, media]
         else:
@@ -479,19 +534,16 @@ def duplicar_slide(prs, slide_origem):
     """Cria uma cópia exata do slide_origem e a insere imediatamente após ele."""
     slide_novo = prs.slides.add_slide(slide_origem.slide_layout)
 
-    # Remove eventuais placeholders automáticos do layout
     for shp in list(slide_novo.shapes):
         sp = shp._element
         sp.getparent().remove(sp)
 
-    # Copia relacionamentos (como imagens, caso existam)
     mapa_rids = {}
     for rId, rel in slide_origem.part.rels.items():
         if "notesSlide" not in rel.reltype and "slideLayout" not in rel.reltype:
             novo_rId = slide_novo.part.rels.get_or_add(rel.reltype, rel._target)
             mapa_rids[rId] = novo_rId
 
-    # Clona todas as formas e tabelas do slide original
     for shp in slide_origem.shapes:
         el_copia = copy.deepcopy(shp._element)
         if mapa_rids:
@@ -502,7 +554,6 @@ def duplicar_slide(prs, slide_origem):
             el_copia = parse_xml(xml_str)
         slide_novo.shapes._spTree.insert_element_before(el_copia, "p:extLst")
 
-    # Reposiciona o slide clonado logo após o slide_origem
     sldIdLst = prs.slides._sldIdLst
     lista_ids = list(sldIdLst)
     idx_origem = prs.slides.index(slide_origem)
@@ -519,7 +570,6 @@ def duplicar_slide(prs, slide_origem):
 total_apresentacoes = 0
 
 for (direc, inep_str), df_escola_todos in grupos_todos.items():
-    # Caminho da pasta da DIREC já criada no passo anterior
     if pd.isna(direc) or str(direc).strip() == "":
         nome_pasta_direc = "Sem_DIREC"
     else:
@@ -528,14 +578,11 @@ for (direc, inep_str), df_escola_todos in grupos_todos.items():
     pasta_direc = pasta_raiz / nome_pasta_direc
     pasta_direc.mkdir(parents=True, exist_ok=True)
 
-    # Nome da escola para a capa
     series_escola = df_escola_todos["ESCOLA"].dropna()
     nome_escola = str(series_escola.iloc[0]).strip() if not series_escola.empty else f"Escola INEP {inep_str}"
 
-    # Abre uma nova instância limpa do template
     prs = Presentation(str(caminho_template))
 
-    # Substitui nome_escola e data_dados (cobre com e sem chaves)
     substituir_texto_placeholders(
         prs,
         {
@@ -546,14 +593,12 @@ for (direc, inep_str), df_escola_todos in grupos_todos.items():
         },
     )
 
-    # Mapeia os slides originais de cada tabela antes de qualquer duplicação
     slides_base_tabelas = {}
     for slide in prs.slides:
         for shp in slide.shapes:
             if shp.has_table and shp.name in mapa_componentes.values():
                 slides_base_tabelas[shp.name] = slide
 
-    # Filtra e prepara os reprovados da escola atual
     df_escola_rep = grupos_reprovados.get((direc, inep_str), df_reprovados_vazio).copy()
     if not df_escola_rep.empty:
         df_escola_rep["SERIE_ORD"] = pd.Categorical(
@@ -563,7 +608,6 @@ for (direc, inep_str), df_escola_todos in grupos_todos.items():
         )
         df_escola_rep["MEDIA_NOTAS"] = pd.to_numeric(df_escola_rep["MEDIA_NOTAS"], errors="coerce")
 
-    # Preenche cada componente curricular (duplicando slides se passar de 11 alunos)
     for componente, nome_tabela in mapa_componentes.items():
         slide_origem = slides_base_tabelas.get(nome_tabela)
         if slide_origem is None:
@@ -571,7 +615,7 @@ for (direc, inep_str), df_escola_todos in grupos_todos.items():
             continue
 
         tabela_origem = encontrar_tabela_no_slide(slide_origem, nome_tabela)
-        max_linhas = len(tabela_origem.rows) - 1  # 11 linhas de dados
+        max_linhas = min(15, len(tabela_origem.rows))  # 15 linhas começando do índice 0
 
         if df_escola_rep.empty:
             df_comp = df_escola_rep
@@ -581,7 +625,6 @@ for (direc, inep_str), df_escola_todos in grupos_todos.items():
                 .sort_values(by=["SERIE_ORD", "MEDIA_NOTAS"], ascending=[True, True], na_position="last")
             )
 
-        # Divide em blocos de 11 estudantes (mantém 1 bloco vazio se houver 0 reprovados)
         if len(df_comp) == 0:
             blocos = [df_comp]
         else:
@@ -599,6 +642,10 @@ for (direc, inep_str), df_escola_todos in grupos_todos.items():
     total_apresentacoes += 1
 
 print(f"Concluído: {total_apresentacoes} apresentações geradas em '{pasta_raiz}'.")
+
+
+
+
 
 
 
